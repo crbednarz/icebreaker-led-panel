@@ -1,7 +1,7 @@
 package esc
 
 import spinal.core._
-import spinal.lib.{Reverse, slave}
+import spinal.lib.{Reverse, master, slave}
 import spinal.lib.fsm._
 import spinal.lib.graphic.{Rgb, RgbConfig}
 
@@ -25,12 +25,46 @@ case class PwmPainter() extends Component {
   io.outColor.b := (io.inColor.b > Reverse(io.frameCount))
 }
 
-case class LedPanelController() extends Component {
+case class Frame() extends Component {
   val io = new Bundle {
-    val led = LedPanel()
-    val color = slave Stream(Rgb(RgbConfig(8, 8, 8)))
+    val inColor = slave Stream(Rgb(RgbConfig(8, 8, 8)))
+    val readRow = in UInt(5 bits)
+    val readColumn = in UInt(6 bits)
+    val topColor = out(Rgb(RgbConfig(8, 8, 8)))
+    val bottomColor = out(Rgb(RgbConfig(8, 8, 8)))
   }
 
+  val frame = Mem(Rgb(RgbConfig(8, 8, 8)), 32 * 32)
+
+  val input = new Area {
+    val writeAddress = Reg(UInt(10 bits)) init(0)
+    io.inColor.ready := True
+    when (io.inColor.valid) {
+      frame(writeAddress) := io.inColor.payload
+      writeAddress := writeAddress + 1
+    }
+  }
+
+  val topColor = Reg(Rgb(RgbConfig(8, 8, 8)))
+  val bottomColor = Reg(Rgb(RgbConfig(8, 8, 8)))
+  val output = new Area {
+    val readAddress = UInt(9 bits)
+    readAddress := (io.readRow >> 1) @@ (io.readColumn >> 1)
+    topColor := frame(U"0" @@ readAddress)
+    bottomColor := frame(U"1" @@ readAddress)
+
+    io.topColor := topColor
+    io.bottomColor := bottomColor
+  }
+}
+
+case class LedPanelController() extends Component {
+  val io = new Bundle {
+    val ledPanel = LedPanel()
+    val colorStream = slave Stream(Rgb(RgbConfig(8, 8, 8)))
+  }
+
+  val row = Reg(UInt(5 bits)) init(0)
   val led = Reg(LedPanel())
   led.address init(0)
   led.top.r init(False)
@@ -41,62 +75,51 @@ case class LedPanelController() extends Component {
   led.bottom.b init(False)
   led.latch init(True)
   led.blank init(True)
-  io.led.address <> led.address
-  io.led.top <> led.top
-  io.led.bottom <> led.bottom
-  io.led.latch <> led.latch
-  io.led.blank <> led.blank
-
-  val frame = Mem(Rgb(RgbConfig(8, 8, 8)), 32 * 32)
-
-  val row = Reg(UInt(5 bits)) init(0)
-  val column = Reg(UInt(7 bits))
+  io.ledPanel.address <> row - 1
+  io.ledPanel.top <> led.top
+  io.ledPanel.bottom <> led.bottom
+  io.ledPanel.latch <> led.latch
+  io.ledPanel.blank <> led.blank
+  val column = Reg(UInt(6 bits)) init(0)
   val clockEnabled = Reg(Bool) init(False)
   val frameCount = Reg(UInt(32 bits)) init(0)
-  val readAddress = UInt(10 bits)
-  val writeAddress = Reg(UInt(10 bits)) init(0)
 
-  val topColor = Reg(Rgb(RgbConfig(8, 8, 8)))
   val topPainter = PwmPainter()
-  topPainter.io.frameCount <> frameCount(7 downto 0)
+  topPainter.io.frameCount := frameCount(7 downto 0)
   led.top <> topPainter.io.outColor
-  topPainter.io.inColor <> topColor
 
-  val bottomColor = Reg(Rgb(RgbConfig(8, 8, 8)))
   val bottomPainter = PwmPainter()
   bottomPainter.io.frameCount <> frameCount(7 downto 0)
   led.bottom <> bottomPainter.io.outColor
-  bottomPainter.io.inColor <> bottomColor
-
-  readAddress := (row >> 1).resize(5) @@ (column >> 1).resize(5)
-  topColor := frame(readAddress)
-  bottomColor := frame(readAddress + 512)
-
-  when (io.color.valid) {
-    frame(writeAddress) := io.color.payload
-    writeAddress := writeAddress + 1
-  }
 
   val ddr = DDR()
   ddr.io.clockIn <> ClockDomain.current.readClockWire
   ddr.io.clockEnable <> clockEnabled
-  io.led.clock <> ddr.io.clockOut
+  io.ledPanel.clock <> ddr.io.clockOut
+
+  val frame = Frame()
+  frame.io.inColor <> io.colorStream
+  frame.io.readRow := row
+  frame.io.readColumn := column
+  bottomPainter.io.inColor <> frame.io.bottomColor
+  topPainter.io.inColor <> frame.io.topColor
 
   val stateMachine = new StateMachine {
-    val blankState = new State with EntryPoint
+    val blankState = new State
     val latchState = new State
     val unlatchState = new State
     val unblankState = new State
-    val shiftState = new State
+    val shiftState = new State with EntryPoint
+    val finishShiftState = new State
 
     blankState.whenIsActive {
       led.blank := True
-      led.address := row
       goto(latchState)
     }
 
     latchState.whenIsActive {
       led.latch := True
+      row := row + 1
       goto(unlatchState)
     }
 
@@ -107,7 +130,6 @@ case class LedPanelController() extends Component {
 
     unblankState.whenIsActive {
       led.blank := False
-      row := row + 1
       when (row === 31) {
         frameCount := frameCount + 1
       }
@@ -115,20 +137,17 @@ case class LedPanelController() extends Component {
     }
 
     shiftState
-      .onEntry {
-        column := 0
-        readAddress := 0
-        clockEnabled := True
-      }
       .whenIsActive {
+        clockEnabled := True
         column := column + 1
-        when (column(6)) {
-          goto(blankState)
+        when (column === 63)  {
+          goto(finishShiftState)
         }
       }
-      .onExit {
-        clockEnabled := False
 
-      }
+    finishShiftState.whenIsActive {
+      clockEnabled := False
+      goto(blankState)
+    }
   }
 }

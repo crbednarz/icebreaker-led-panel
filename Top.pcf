@@ -1,22 +1,22 @@
 set_io clk 35
 
 # Panel Address
-set_io io_led_address[0] 43
-set_io io_led_address[1] 38
-set_io io_led_address[2] 34
-set_io io_led_address[3] 31
-set_io io_led_address[4] 28
+set_io io_ledPanel_address[0] 43
+set_io io_ledPanel_address[1] 38
+set_io io_ledPanel_address[2] 34
+set_io io_ledPanel_address[3] 31
+set_io io_ledPanel_address[4] 28
 
-set_io io_led_clock 32
-set_io io_led_latch 36
-set_io io_led_blank 42
+set_io io_ledPanel_clock 32
+set_io io_ledPanel_latch 36
+set_io io_ledPanel_blank 42
 
-set_io io_led_bottom_r 3  # A7 - Red   1
-set_io io_led_bottom_g 48 # A8 - Green 1
-set_io io_led_bottom_b 46 # A9 - Blue  1
-set_io io_led_top_r 4  # A1 - Red   0
-set_io io_led_top_g 2  # A2 - Green 0
-set_io io_led_top_b 47 # A3 - Blue  0
+set_io io_ledPanel_bottom_r 3  # A7 - Red   1
+set_io io_ledPanel_bottom_g 48 # A8 - Green 1
+set_io io_ledPanel_bottom_b 46 # A9 - Blue  1
+set_io io_ledPanel_top_r 4  # A1 - Red   0
+set_io io_ledPanel_top_g 2  # A2 - Green 0
+set_io io_ledPanel_top_b 47 # A3 - Blue  0
 
 
 set_io io_leds[0] 26
