@@ -88,7 +88,6 @@ case class LedPanelController() extends Component {
   io.ledPanel.blank <> blank
 
   val clockEnabled = Reg(Bool) init(False)
-  io.ledPanel.clock <> (ClockDomain.current.readClockWire && clockEnabled)
 
   val column = Reg(UInt(6 bits)) init(0)
   val frameCount = Reg(UInt(32 bits)) init(0)
@@ -106,6 +105,10 @@ case class LedPanelController() extends Component {
   bottomPainter.io.inColor <> io.bottomColor
   bottomShift <> bottomPainter.io.outColor
 
+  val slowClock = Reg(Bool) init(False)
+  slowClock := ~slowClock
+  io.ledPanel.clock <> (slowClock & clockEnabled)
+
   val stateMachine = new StateMachine {
     val blankState = new State
     val latchState = new State
@@ -116,42 +119,57 @@ case class LedPanelController() extends Component {
 
     blankState.whenIsActive {
       blank := True
-      goto(latchState)
+      when (~slowClock) {
+        goto(latchState)
+      }
     }
 
     latchState.whenIsActive {
       latch := True
-      row := row + 1
-      goto(unlatchState)
+      when (~slowClock) {
+        goto(unlatchState)
+      } otherwise {
+        row := row + 1
+      }
     }
 
     unlatchState.whenIsActive {
       latch := False
-      goto(unblankState)
+      when (~slowClock) {
+        goto(unblankState)
+      }
     }
 
     unblankState.whenIsActive {
       blank := False
-      when (row === 31) {
-        frameCount := frameCount + 1
+      when (slowClock) {
+        when(row === 31) {
+          frameCount := frameCount + 1
+        }
+      } otherwise {
+        goto(shiftState)
       }
-      goto(shiftState)
     }
 
     shiftState
-      .onEntry(column := 1)
+      .onEntry(column := 0)
       .whenIsActive {
         clockEnabled := True
-        column := column + 1
-        when (column === 0)  {
-          column := 0
-          goto(finishShiftState)
+        when (slowClock) {
+          column := column + 1
+        } otherwise {
+          when(column === 0) {
+            column := 0
+            goto(finishShiftState)
+          }
         }
       }
 
     finishShiftState.whenIsActive {
       clockEnabled := False
-      goto(blankState)
+      when (~slowClock) {
+        goto(blankState)
+      }
     }
   }
 }
@@ -162,14 +180,13 @@ case class BufferedLedPanelController() extends Component {
     val colorStream = slave Stream(Rgb(RgbConfig(8, 8, 8)))
   }
 
-  val panelCtrl = LedPanelController()
-  panelCtrl.io.ledPanel <> io.ledPanel
-
   val frame = Frame()
   frame.io.inColor <> io.colorStream
+
+  val panelCtrl = LedPanelController()
+  panelCtrl.io.ledPanel <> io.ledPanel
   frame.io.read.row := panelCtrl.io.readRow
   frame.io.read.column := panelCtrl.io.readColumn
   panelCtrl.io.bottomColor <> frame.io.read.bottom
   panelCtrl.io.topColor <> frame.io.read.top
-
 }

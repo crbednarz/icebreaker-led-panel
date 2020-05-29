@@ -13,11 +13,11 @@ class Top extends Component {
   }
 
   val clockControl = new Area {
-    val pll = PLL30MHz()
+    val pll = PLL60MHz()
     pll.io.clockIn := ClockDomain.current.readClockWire
     val domain = ClockDomain.internal(
       name = "core",
-      frequency = FixedFrequency(30 MHz)
+      frequency = FixedFrequency(60 MHz)
     )
     domain.clock := pll.io.clockOut
   }
