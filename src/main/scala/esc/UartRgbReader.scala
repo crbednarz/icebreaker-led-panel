@@ -12,7 +12,7 @@ case class UartRgbReader() extends Component {
   }
 
   val uartCtrl = new UartCtrl()
-  uartCtrl.io.config.setClockDivider(921600 Hz)
+  uartCtrl.io.config.setClockDivider(921600*4 Hz)
   uartCtrl.io.config.frame.dataLength := 7
   uartCtrl.io.config.frame.parity := UartParityType.NONE
   uartCtrl.io.config.frame.stop := UartStopType.ONE

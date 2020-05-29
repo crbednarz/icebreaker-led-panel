@@ -26,7 +26,7 @@ class Top extends Component {
     val uartRgbReader = UartRgbReader()
     uartRgbReader.io.uart <> io.uart
 
-    val panelCtrl = LedPanelController()
+    val panelCtrl = BufferedLedPanelController()
     panelCtrl.io.ledPanel <> io.ledPanel
     panelCtrl.io.colorStream << uartRgbReader.io.color.toStream
   }

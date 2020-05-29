@@ -7,102 +7,104 @@ import spinal.lib.graphic.{Rgb, RgbConfig}
 
 case class LedPanel() extends Bundle {
   val address = out UInt(5 bits)
-  val top = RgbShift()
-  val bottom = RgbShift()
+  val top = out(Rgb(RgbConfig(1, 1, 1)))
+  val bottom = out(Rgb(RgbConfig(1, 1, 1)))
   val clock = out Bool
   val latch = out Bool
   val blank = out Bool
 }
 
-case class PwmPainter() extends Component {
+case class ColorToPwm() extends Component {
   val io = new Bundle {
     val frameCount = in UInt(8 bits)
-    val inColor = in(Rgb(RgbConfig(8, 8, 8)))
-    val outColor = out(RgbShift())
+    val inColor = in(Rgb(RgbConfig(5, 6, 5)))
+    val outColor = out(Rgb(RgbConfig(1, 1, 1)))
   }
-  io.outColor.r := (io.inColor.r > Reverse(io.frameCount))
-  io.outColor.g := (io.inColor.g > Reverse(io.frameCount))
-  io.outColor.b := (io.inColor.b > Reverse(io.frameCount))
+  io.outColor.r(0) := (io.inColor.r > Reverse(io.frameCount(4 downto 0)))
+  io.outColor.g(0) := (io.inColor.g > Reverse(io.frameCount(5 downto 0)))
+  io.outColor.b(0) := (io.inColor.b > Reverse(io.frameCount(4 downto 0)))
 }
 
 case class Frame() extends Component {
   val io = new Bundle {
     val inColor = slave Stream(Rgb(RgbConfig(8, 8, 8)))
-    val readRow = in UInt(5 bits)
-    val readColumn = in UInt(6 bits)
-    val topColor = out(Rgb(RgbConfig(8, 8, 8)))
-    val bottomColor = out(Rgb(RgbConfig(8, 8, 8)))
-  }
 
-  val frame = Mem(Rgb(RgbConfig(8, 8, 8)), 32 * 32)
+    val read = new Bundle() {
+      val row = in UInt(5 bits)
+      val column = in UInt(6 bits)
+      val top = out(Rgb(RgbConfig(5, 6, 5)))
+      val bottom = out(Rgb(RgbConfig(5, 6, 5)))
+    }
+  }
+  val frame = Mem(Rgb(RgbConfig(5, 6, 5)), 64 * 64)
 
   val input = new Area {
-    val writeAddress = Reg(UInt(10 bits)) init(0)
+    val writeAddress = Reg(UInt(12 bits)) init(0)
     io.inColor.ready := True
     when (io.inColor.valid) {
-      frame(writeAddress) := io.inColor.payload
+      val reducedColor = Rgb(RgbConfig(5, 6, 5))
+      reducedColor.r := io.inColor.payload.r >> 3
+      reducedColor.g := io.inColor.payload.g >> 2
+      reducedColor.b := io.inColor.payload.b >> 3
+      frame(writeAddress) := reducedColor
       writeAddress := writeAddress + 1
     }
   }
 
-  val topColor = Reg(Rgb(RgbConfig(8, 8, 8)))
-  val bottomColor = Reg(Rgb(RgbConfig(8, 8, 8)))
+  val topColor = Reg(Rgb(RgbConfig(5, 6, 5)))
+  val bottomColor = Reg(Rgb(RgbConfig(5, 6, 5)))
   val output = new Area {
-    val readAddress = UInt(9 bits)
-    readAddress := (io.readRow >> 1) @@ (io.readColumn >> 1)
+    val readAddress = UInt(11 bits)
+    readAddress := io.read.row @@ io.read.column
     topColor := frame(U"0" @@ readAddress)
     bottomColor := frame(U"1" @@ readAddress)
-
-    io.topColor := topColor
-    io.bottomColor := bottomColor
+    io.read.top := topColor
+    io.read.bottom := bottomColor
   }
 }
 
 case class LedPanelController() extends Component {
   val io = new Bundle {
     val ledPanel = LedPanel()
-    val colorStream = slave Stream(Rgb(RgbConfig(8, 8, 8)))
+    val readRow = out UInt(5 bits)
+    val readColumn = out UInt(6 bits)
+    val topColor = in(Rgb(RgbConfig(5, 6, 5)))
+    val bottomColor = in(Rgb(RgbConfig(5, 6, 5)))
   }
 
-  val row = Reg(UInt(5 bits)) init(0)
-  val led = Reg(LedPanel())
-  led.address init(0)
-  led.top.r init(False)
-  led.top.g init(False)
-  led.top.b init(False)
-  led.bottom.r init(False)
-  led.bottom.g init(False)
-  led.bottom.b init(False)
-  led.latch init(True)
-  led.blank init(True)
+  val row = Reg(UInt(5 bits))
   io.ledPanel.address <> row - 1
-  io.ledPanel.top <> led.top
-  io.ledPanel.bottom <> led.bottom
-  io.ledPanel.latch <> led.latch
-  io.ledPanel.blank <> led.blank
-  val column = Reg(UInt(6 bits)) init(0)
+
+  val topShift = Reg(Rgb(RgbConfig(1, 1, 1)))
+  io.ledPanel.top <> topShift
+
+  val bottomShift = Reg(Rgb(RgbConfig(1, 1, 1)))
+  io.ledPanel.bottom <> bottomShift
+
+  val latch = Reg(Bool()) init(True)
+  io.ledPanel.latch <> latch
+
+  val blank = Reg(Bool()) init(True)
+  io.ledPanel.blank <> blank
+
   val clockEnabled = Reg(Bool) init(False)
+  io.ledPanel.clock <> (ClockDomain.current.readClockWire && clockEnabled)
+
+  val column = Reg(UInt(6 bits)) init(0)
   val frameCount = Reg(UInt(32 bits)) init(0)
 
-  val topPainter = PwmPainter()
+  io.readColumn <> column
+  io.readRow <> row
+
+  val topPainter = ColorToPwm()
   topPainter.io.frameCount := frameCount(7 downto 0)
-  led.top <> topPainter.io.outColor
+  topPainter.io.inColor <> io.topColor
+  topShift <> topPainter.io.outColor
 
-  val bottomPainter = PwmPainter()
+  val bottomPainter = ColorToPwm()
   bottomPainter.io.frameCount <> frameCount(7 downto 0)
-  led.bottom <> bottomPainter.io.outColor
-
-  val ddr = DDR()
-  ddr.io.clockIn <> ClockDomain.current.readClockWire
-  ddr.io.clockEnable <> clockEnabled
-  io.ledPanel.clock <> ddr.io.clockOut
-
-  val frame = Frame()
-  frame.io.inColor <> io.colorStream
-  frame.io.readRow := row
-  frame.io.readColumn := column
-  bottomPainter.io.inColor <> frame.io.bottomColor
-  topPainter.io.inColor <> frame.io.topColor
+  bottomPainter.io.inColor <> io.bottomColor
+  bottomShift <> bottomPainter.io.outColor
 
   val stateMachine = new StateMachine {
     val blankState = new State
@@ -113,23 +115,23 @@ case class LedPanelController() extends Component {
     val finishShiftState = new State
 
     blankState.whenIsActive {
-      led.blank := True
+      blank := True
       goto(latchState)
     }
 
     latchState.whenIsActive {
-      led.latch := True
+      latch := True
       row := row + 1
       goto(unlatchState)
     }
 
     unlatchState.whenIsActive {
-      led.latch := False
+      latch := False
       goto(unblankState)
     }
 
     unblankState.whenIsActive {
-      led.blank := False
+      blank := False
       when (row === 31) {
         frameCount := frameCount + 1
       }
@@ -137,10 +139,12 @@ case class LedPanelController() extends Component {
     }
 
     shiftState
+      .onEntry(column := 1)
       .whenIsActive {
         clockEnabled := True
         column := column + 1
-        when (column === 63)  {
+        when (column === 0)  {
+          column := 0
           goto(finishShiftState)
         }
       }
@@ -150,4 +154,22 @@ case class LedPanelController() extends Component {
       goto(blankState)
     }
   }
+}
+
+case class BufferedLedPanelController() extends Component {
+  val io = new Bundle {
+    val ledPanel = LedPanel()
+    val colorStream = slave Stream(Rgb(RgbConfig(8, 8, 8)))
+  }
+
+  val panelCtrl = LedPanelController()
+  panelCtrl.io.ledPanel <> io.ledPanel
+
+  val frame = Frame()
+  frame.io.inColor <> io.colorStream
+  frame.io.read.row := panelCtrl.io.readRow
+  frame.io.read.column := panelCtrl.io.readColumn
+  panelCtrl.io.bottomColor <> frame.io.read.bottom
+  panelCtrl.io.topColor <> frame.io.read.top
+
 }

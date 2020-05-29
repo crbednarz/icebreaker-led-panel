@@ -1,0 +1,1 @@
+nextpnr-ice40 --up5k --package sg48 --json hardware.json --asc hardware.asc --pcf Top.pcf --gui
