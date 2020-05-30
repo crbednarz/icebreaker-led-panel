@@ -41,7 +41,7 @@ case class UartRgbReader() extends Component {
   }
 
   val write = Stream(Bits(8 bits))
-  write.valid := CounterFreeRun(2000).willOverflow
+  write.valid := False
   write.payload := 0
   write >-> uartCtrl.io.write
 }

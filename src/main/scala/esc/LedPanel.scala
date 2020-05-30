@@ -1,7 +1,7 @@
 package esc
 
 import spinal.core._
-import spinal.lib.{Reverse, master, slave}
+import spinal.lib._
 import spinal.lib.fsm._
 import spinal.lib.graphic.{Rgb, RgbConfig}
 
@@ -12,6 +12,11 @@ case class LedPanel() extends Bundle {
   val clock = out Bool
   val latch = out Bool
   val blank = out Bool
+}
+
+case class ColorPair() extends Bundle {
+  val top = Rgb(RgbConfig(5, 6, 5))
+  val bottom = Rgb(RgbConfig(5, 6, 5))
 }
 
 case class ColorToPwm() extends Component {
@@ -25,51 +30,10 @@ case class ColorToPwm() extends Component {
   io.outColor.b(0) := (io.inColor.b > Reverse(io.frameCount(4 downto 0)))
 }
 
-case class Frame() extends Component {
-  val io = new Bundle {
-    val inColor = slave Stream(Rgb(RgbConfig(8, 8, 8)))
-
-    val read = new Bundle() {
-      val row = in UInt(5 bits)
-      val column = in UInt(6 bits)
-      val top = out(Rgb(RgbConfig(5, 6, 5)))
-      val bottom = out(Rgb(RgbConfig(5, 6, 5)))
-    }
-  }
-  val frame = Mem(Rgb(RgbConfig(5, 6, 5)), 64 * 64)
-
-  val input = new Area {
-    val writeAddress = Reg(UInt(12 bits)) init(0)
-    io.inColor.ready := True
-    when (io.inColor.valid) {
-      val reducedColor = Rgb(RgbConfig(5, 6, 5))
-      reducedColor.r := io.inColor.payload.r >> 3
-      reducedColor.g := io.inColor.payload.g >> 2
-      reducedColor.b := io.inColor.payload.b >> 3
-      frame(writeAddress) := reducedColor
-      writeAddress := writeAddress + 1
-    }
-  }
-
-  val topColor = Reg(Rgb(RgbConfig(5, 6, 5)))
-  val bottomColor = Reg(Rgb(RgbConfig(5, 6, 5)))
-  val output = new Area {
-    val readAddress = UInt(11 bits)
-    readAddress := io.read.row @@ io.read.column
-    topColor := frame(U"0" @@ readAddress)
-    bottomColor := frame(U"1" @@ readAddress)
-    io.read.top := topColor
-    io.read.bottom := bottomColor
-  }
-}
-
 case class LedPanelController() extends Component {
   val io = new Bundle {
     val ledPanel = LedPanel()
-    val readRow = out UInt(5 bits)
-    val readColumn = out UInt(6 bits)
-    val topColor = in(Rgb(RgbConfig(5, 6, 5)))
-    val bottomColor = in(Rgb(RgbConfig(5, 6, 5)))
+    val colorStream = slave Stream(ColorPair())
   }
 
   val row = Reg(UInt(5 bits))
@@ -87,36 +51,60 @@ case class LedPanelController() extends Component {
   val blank = Reg(Bool()) init(True)
   io.ledPanel.blank <> blank
 
-  val clockEnabled = Reg(Bool) init(False)
-
   val column = Reg(UInt(6 bits)) init(0)
   val frameCount = Reg(UInt(32 bits)) init(0)
 
-  io.readColumn <> column
-  io.readRow <> row
-
   val topPainter = ColorToPwm()
+  val topColor = Reg(Rgb(RgbConfig(5, 6, 5)))
   topPainter.io.frameCount := frameCount(7 downto 0)
-  topPainter.io.inColor <> io.topColor
+  topPainter.io.inColor <> topColor
   topShift <> topPainter.io.outColor
 
   val bottomPainter = ColorToPwm()
+  val bottomColor = Reg(Rgb(RgbConfig(5, 6, 5)))
   bottomPainter.io.frameCount <> frameCount(7 downto 0)
-  bottomPainter.io.inColor <> io.bottomColor
+  bottomPainter.io.inColor <> bottomColor
   bottomShift <> bottomPainter.io.outColor
 
   val slowClock = Reg(Bool) init(False)
   slowClock := ~slowClock
-  io.ledPanel.clock <> (slowClock & clockEnabled)
 
   val stateMachine = new StateMachine {
+    val shiftState = new State
+    val finishShiftState = new State
     val blankState = new State
     val latchState = new State
     val unlatchState = new State
-    val unblankState = new State
-    val shiftState = new State with EntryPoint
-    val finishShiftState = new State
+    val unblankState = new State with EntryPoint
 
+    val consumeStream = Reg(Bool) init(False)
+
+    io.colorStream.ready := consumeStream
+    io.ledPanel.clock := ~consumeStream
+
+    shiftState
+      .onEntry {
+        column := 0
+      }
+      .whenIsActive {
+        when (slowClock) {
+          bottomColor := io.colorStream.payload.bottom
+          topColor := io.colorStream.payload.top
+          consumeStream := True
+        } otherwise {
+          consumeStream := False
+          column := column + 1
+          when(column === 63) {
+            goto(finishShiftState)
+          }
+        }
+      }
+
+    finishShiftState.whenIsActive {
+      when (~slowClock) {
+        goto(blankState)
+      }
+    }
     blankState.whenIsActive {
       blank := True
       when (~slowClock) {
@@ -150,25 +138,71 @@ case class LedPanelController() extends Component {
         goto(shiftState)
       }
     }
+  }
+}
 
-    shiftState
-      .onEntry(column := 0)
-      .whenIsActive {
-        clockEnabled := True
-        when (slowClock) {
-          column := column + 1
-        } otherwise {
-          when(column === 0) {
-            column := 0
-            goto(finishShiftState)
-          }
-        }
+case class FrameStreamer() extends Component {
+  val io = new Bundle {
+    val read = new Bundle() {
+      val row = out UInt(6 bits)
+      val column = out UInt(6 bits)
+      val color = in(Rgb(RgbConfig(5, 6, 5)))
+    }
+
+    val colorStream = master Stream(ColorPair())
+  }
+
+  val colorStream = new Stream(ColorPair())
+  io.colorStream <> colorStream
+
+  val address = Reg(UInt(11 bits)) init(0)
+  val segment = Reg(UInt(1 bits)) init(0)
+
+  val fullAddress = segment @@ address
+  io.read.row := fullAddress(11 downto 6)
+  io.read.column := fullAddress(5 downto 0)
+
+  val streamValid = Reg(Bool) init(False)
+  colorStream.valid := streamValid
+
+  val colors = Reg(ColorPair())
+  colorStream.payload := colors
+
+  val stateMachine = new StateMachine {
+    val initState = new State with EntryPoint
+    val loadTop = new State
+    val loadBottom = new State
+
+    val top = Reg(Rgb(RgbConfig(5, 6, 5)))
+
+    initState.whenIsActive {
+      goto(loadTop)
+    }
+
+    loadTop.whenIsActive {
+      top.r := fullAddress(4 downto 0)
+      top.g := fullAddress(10 downto 5)
+      top.b := U(fullAddress(11)) << 4
+      segment := 1
+
+      when (colorStream.ready) {
+        streamValid := False
       }
+      goto(loadBottom)
+    }
 
-    finishShiftState.whenIsActive {
-      clockEnabled := False
-      when (~slowClock) {
-        goto(blankState)
+    loadBottom.whenIsActive {
+      when (colorStream.ready | !streamValid) {
+        colors.top := top
+        colors.bottom.r := fullAddress(4 downto 0)
+        colors.bottom.g := fullAddress(10 downto 5)
+        colors.bottom.b := U(fullAddress(11)) << 4
+
+        streamValid := True
+        segment := 0
+        address := address + 1
+
+        goto(loadTop)
       }
     }
   }
@@ -183,10 +217,12 @@ case class BufferedLedPanelController() extends Component {
   val frame = Frame()
   frame.io.inColor <> io.colorStream
 
+  val frameStreamer = FrameStreamer()
+  frame.io.read.row := frameStreamer.io.read.row
+  frame.io.read.column := frameStreamer.io.read.column
+  frameStreamer.io.read.color := frame.io.read.color
+
   val panelCtrl = LedPanelController()
   panelCtrl.io.ledPanel <> io.ledPanel
-  frame.io.read.row := panelCtrl.io.readRow
-  frame.io.read.column := panelCtrl.io.readColumn
-  panelCtrl.io.bottomColor <> frame.io.read.bottom
-  panelCtrl.io.topColor <> frame.io.read.top
+  panelCtrl.io.colorStream << frameStreamer.io.colorStream
 }
