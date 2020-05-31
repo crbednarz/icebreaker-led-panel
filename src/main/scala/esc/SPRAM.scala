@@ -16,6 +16,10 @@ case class DualSPRAM() extends Component {
       val enable = in Bool
     }
   }
+  // BRAM version - Only one buffer really, but it's useful for debugging.
+  // val data = Mem(UInt(16 bits), 64*64)
+  // io.read.dataOut := data.readSync(io.read.address(11 downto 0), io.read.enable)
+  // data.write(io.write.address(11 downto 0), io.write.dataIn, enable = io.write.enable)
 
   val spram = Array.fill(2)(new SPRAM())
 
@@ -41,6 +45,8 @@ case class SPRAM() extends Component {
     val dataIn = in UInt(16 bits)
     val dataOut = out UInt(16 bits)
   }
+
+
   val ram = SB_SPRAM256KA()
   ram.io.ADDRESS <> io.address
   ram.io.DATAIN <> io.dataIn

@@ -10,6 +10,14 @@ case class PLL30MHz() extends BlackBox {
   noIoPrefix()
 }
 
+case class PLL50MHz() extends BlackBox {
+  val io = new Bundle {
+    val clockIn = in Bool
+    val clockOut = out Bool
+  }
+  noIoPrefix()
+}
+
 case class PLL60MHz() extends BlackBox {
   val io = new Bundle {
     val clockIn = in Bool

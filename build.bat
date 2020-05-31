@@ -1,1 +1,1 @@
-apio build
+apio build --verbose-pnr
