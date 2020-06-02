@@ -2,35 +2,35 @@ package esc
 
 import spinal.core._
 import spinal.lib.graphic._
-import spinal.lib.slave
+import spinal.lib._
 
+case class FrameWrite() extends Bundle {
+  val address = UInt(12 bits)
+  val color = Rgb(8, 8, 8)
+}
 
 case class Frame() extends Component {
   val io = new Bundle {
-    val inColor = slave Stream(Rgb(RgbConfig(8, 8, 8)))
-
+    val present = in Bool
+    val write = slave Flow(FrameWrite())
     val read = new Bundle() {
       val address = in UInt(12 bits)
-      val color = out(Rgb(RgbConfig(5, 6, 5)))
+      val color = out(Rgb(5, 6, 5))
     }
   }
   val buffer = DualSPRAM()
   val flipBuffers = Reg(Bool) init(False)
   buffer.io.swapped := flipBuffers
 
-  val input = new Area {
-    val writeAddress = Reg(UInt(12 bits)) init(0)
-    buffer.io.write.address := writeAddress.resize(14)
-    buffer.io.write.enable := io.inColor.valid
-    buffer.io.write.dataIn := (io.inColor.payload.r >> 3) @@ (io.inColor.payload.g >> 2) @@ (io.inColor.payload.b >> 3)
+  when (io.present) {
+    flipBuffers := !flipBuffers
+  }
 
-    io.inColor.ready := True
-    when (io.inColor.valid) {
-      writeAddress := writeAddress + 1
-      when (~writeAddress === 0) {
-        flipBuffers := ~flipBuffers
-      }
-    }
+  val input = new Area {
+    val writeAddress = io.write.payload.address
+    buffer.io.write.address := writeAddress.resize(14)
+    buffer.io.write.enable := io.write.valid
+    buffer.io.write.dataIn := (io.write.payload.color.r >> 3) @@ (io.write.payload.color.g >> 2) @@ (io.write.payload.color.b >> 3)
   }
 
   val output = new Area {

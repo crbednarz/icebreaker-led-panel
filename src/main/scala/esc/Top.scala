@@ -10,6 +10,7 @@ class Top extends Component {
   val io = new Bundle {
     val ledPanel = LedPanel()
     val uart = master(Uart())
+    val leds = out Bits(5 bits)
   }
 
   val clockControl = new Area {
@@ -23,12 +24,18 @@ class Top extends Component {
   }
 
   val core = new ClockingArea(clockControl.domain) {
+    io.leds(0) := ClockDomain.current.readClockWire
+    io.leds(1) := ClockDomain.current.readClockWire
+    io.leds(2) := ClockDomain.current.readClockWire
+    io.leds(3) := ClockDomain.current.readClockWire
+    io.leds(4) := ClockDomain.current.readClockWire
     val uartRgbReader = UartRgbReader()
     uartRgbReader.io.uart <> io.uart
 
     val panelCtrl = BufferedLedPanelController()
     panelCtrl.io.ledPanel <> io.ledPanel
-    panelCtrl.io.colorStream << uartRgbReader.io.color.toStream
+    panelCtrl.io.write << uartRgbReader.io.color
+    panelCtrl.io.present <> uartRgbReader.io.frameComplete
   }
 
 }

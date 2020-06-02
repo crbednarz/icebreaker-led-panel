@@ -3,27 +3,27 @@ package esc
 import spinal.core._
 import spinal.lib._
 import spinal.lib.fsm._
-import spinal.lib.graphic.{Rgb, RgbConfig}
+import spinal.lib.graphic._
 
 case class LedPanel() extends Bundle {
   val address = out UInt(5 bits)
-  val top = out(Rgb(RgbConfig(1, 1, 1)))
-  val bottom = out(Rgb(RgbConfig(1, 1, 1)))
+  val top = out(Rgb(1, 1, 1))
+  val bottom = out(Rgb(1, 1, 1))
   val clock = out Bool
   val latch = out Bool
   val blank = out Bool
 }
 
 case class ColorPair() extends Bundle {
-  val top = Rgb(RgbConfig(5, 6, 5))
-  val bottom = Rgb(RgbConfig(5, 6, 5))
+  val top = Rgb(5, 6, 5)
+  val bottom = Rgb(5, 6, 5)
 }
 
 case class ColorToPwm() extends Component {
   val io = new Bundle {
     val frameCount = in UInt(8 bits)
-    val inColor = in(Rgb(RgbConfig(5, 6, 5)))
-    val outColor = out(Rgb(RgbConfig(1, 1, 1)))
+    val inColor = in(Rgb(5, 6, 5))
+    val outColor = out(Rgb(1, 1, 1))
   }
   io.outColor.r(0) := (io.inColor.r > Reverse(io.frameCount(4 downto 0)))
   io.outColor.g(0) := (io.inColor.g > Reverse(io.frameCount(5 downto 0)))
@@ -39,10 +39,10 @@ case class LedPanelController() extends Component {
   val row = Reg(UInt(5 bits))
   io.ledPanel.address <> RegNext(row - 1)
 
-  val topShift = Reg(Rgb(RgbConfig(1, 1, 1)))
+  val topShift = Reg(Rgb(1, 1, 1))
   io.ledPanel.top <> topShift
 
-  val bottomShift = Reg(Rgb(RgbConfig(1, 1, 1)))
+  val bottomShift = Reg(Rgb(1, 1, 1))
   io.ledPanel.bottom <> bottomShift
 
   val latch = Reg(Bool()) init(True)
@@ -55,13 +55,13 @@ case class LedPanelController() extends Component {
   val frameCount = Reg(UInt(32 bits)) init(0)
 
   val topPainter = ColorToPwm()
-  val topColor = Reg(Rgb(RgbConfig(5, 6, 5)))
+  val topColor = Reg(Rgb(5, 6, 5))
   topPainter.io.frameCount := frameCount(7 downto 0)
   topPainter.io.inColor <> topColor
   topShift <> topPainter.io.outColor
 
   val bottomPainter = ColorToPwm()
-  val bottomColor = Reg(Rgb(RgbConfig(5, 6, 5)))
+  val bottomColor = Reg(Rgb(5, 6, 5))
   bottomPainter.io.frameCount <> frameCount(7 downto 0)
   bottomPainter.io.inColor <> bottomColor
   bottomShift <> bottomPainter.io.outColor
@@ -138,7 +138,7 @@ case class FrameStreamer() extends Component {
   val io = new Bundle {
     val read = new Bundle() {
       val address = out UInt(12 bits)
-      val color = in(Rgb(RgbConfig(5, 6, 5)))
+      val color = in(Rgb(5, 6, 5))
     }
 
     val colorStream = master Stream(ColorPair())
@@ -163,8 +163,8 @@ case class FrameStreamer() extends Component {
     val loadBottom = new State
     val waitState = new State
 
-    val top = Reg(Rgb(RgbConfig(5, 6, 5)))
-    val bottom = Reg(Rgb(RgbConfig(5, 6, 5)))
+    val top = Reg(Rgb(5, 6, 5))
+    val bottom = Reg(Rgb(5, 6, 5))
 
     loadTop.whenIsActive {
       top := io.read.color
@@ -206,11 +206,13 @@ case class FrameStreamer() extends Component {
 case class BufferedLedPanelController() extends Component {
   val io = new Bundle {
     val ledPanel = LedPanel()
-    val colorStream = slave Stream(Rgb(RgbConfig(8, 8, 8)))
+    val write = slave Flow(FrameWrite())
+    val present = in Bool
   }
 
   val frame = Frame()
-  frame.io.inColor <> io.colorStream
+  frame.io.write <> io.write
+  frame.io.present <> io.present
 
   val frameStreamer = FrameStreamer()
   frame.io.read.address := frameStreamer.io.read.address
